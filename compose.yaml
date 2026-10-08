@@ -1,0 +1,165 @@
+# Local test stack: one seeded server of each type (the backup sources), one empty
+# server of each type (restore destinations), and an MQTT broker.
+#
+#   docker compose up -d --wait                           # start the databases
+#   mkdir -p .backups                                     # (so it isn't created root-owned)
+#   docker compose --profile tool run --rm dbbackup backup   # back them all up into ./.backups
+#   docker compose --profile tool run --rm --build tests     # run the integration tests
+#   docker compose down -v                                # throw it all away
+#
+# Or just `make integration`.
+#
+# Credentials here are throwaway test values. The *-restore servers deliberately
+# have different root passwords from the sources: a restore that overwrote the
+# restoring account's own password would then break, visibly.
+
+name: dbbackup-dev
+
+x-mongo: &mongo
+  image: mongo:8.3
+  environment:
+    MONGO_INITDB_ROOT_USERNAME: root
+    MONGO_INITDB_ROOT_PASSWORD: mongo-root
+  # Replica set with auth needs a keyfile; make a throwaway one.
+  entrypoint:
+    - bash
+    - -c
+    - |
+      openssl rand -base64 756 > /tmp/keyfile && chmod 400 /tmp/keyfile && chown mongodb:mongodb /tmp/keyfile
+      exec docker-entrypoint.sh "$$@"
+    - --
+  command: [mongod, --replSet, rs0, --keyFile, /tmp/keyfile, --bind_ip_all]
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: postgres-root
+    volumes:
+      - ./tests/integration/seed/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres]
+      interval: 2s
+      retries: 30
+
+  postgres-restore:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: restore-root
+    # Start after the source server: initializing both at once can hit the
+    # image entrypoints' 30-second startup limit on slow hosts.
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres]
+      interval: 2s
+      retries: 30
+
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: mariadb-root
+    volumes:
+      - ./tests/integration/seed/mariadb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 2s
+      retries: 30
+
+  mariadb-restore:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: restore-root
+    # Start after the source server: initializing both at once can hit the
+    # image entrypoints' 30-second startup limit on slow hosts.
+    depends_on:
+      mariadb: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 2s
+      retries: 30
+
+  mongodb:
+    <<: *mongo
+    volumes:
+      - ./tests/integration/seed/mongodb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - -u
+        - root
+        - -p
+        - mongo-root
+        - --eval
+        - "try { rs.status().myState === 1 ? 0 : quit(1) } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongodb:27017'}]}); quit(1) }"
+      interval: 3s
+      retries: 40
+
+  mongodb-restore:
+    <<: *mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: restore-root
+    # Start after the source server: initializing both at once can hit the
+    # image entrypoints' 30-second startup limit on slow hosts.
+    depends_on:
+      mongodb: {condition: service_healthy}
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - -u
+        - root
+        - -p
+        - restore-root
+        - --eval
+        - "try { rs.status().myState === 1 ? 0 : quit(1) } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongodb-restore:27017'}]}); quit(1) }"
+      interval: 3s
+      retries: 40
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    command: [mosquitto, -c, /mosquitto-no-auth.conf]
+
+  # The backup tool itself, pointed at the seeded servers.
+  dbbackup:
+    profiles: [tool]
+    build:
+      context: .
+      target: runtime
+    user: "${UID:-1000}:${GID:-1000}"
+    # As in the CronJob: read-only root filesystem, writable /tmp.
+    read_only: true
+    tmpfs: [/tmp]
+    env_file: tests/integration/test.env
+    volumes:
+      - ./tests/integration/config.yaml:/etc/dbbackup/config.yaml:ro
+      - ./tests/integration/secrets:/run/secrets/dbbackup:ro
+      - ./.backups:/backups
+    depends_on: &db-deps
+      postgres: {condition: service_healthy}
+      postgres-restore: {condition: service_healthy}
+      mariadb: {condition: service_healthy}
+      mariadb-restore: {condition: service_healthy}
+      mongodb: {condition: service_healthy}
+      mongodb-restore: {condition: service_healthy}
+      mosquitto: {condition: service_started}
+
+  # Integration tests, run inside the image so they use its client tools.
+  tests:
+    profiles: [tool]
+    build:
+      context: .
+      target: test
+    env_file: tests/integration/test.env
+    volumes:
+      - ./tests/integration/config.yaml:/etc/dbbackup/config.yaml:ro
+      - ./tests/integration/secrets:/run/secrets/dbbackup:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /backups:uid=10001,gid=10001
+    depends_on: *db-deps

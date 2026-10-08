@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dbbackup"
+version = "0.1.0"
+description = "Containerized logical backups of MariaDB, PostgreSQL and MongoDB servers, with GFS retention"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0",
+    "paho-mqtt>=2.1",
+    "pymongo>=4.10",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+]
+
+[project.scripts]
+dbbackup = "dbbackup.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 140
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: needs the compose test stack (run inside the test image)",
+]
+addopts = "-m 'not integration'"

@@ -1,0 +1,31 @@
+# Base deployment: kubectl apply -k deploy/k8s
+#
+# Before applying:
+#   1. Edit config.yaml for your servers and MQTT broker.
+#   2. Edit nfs-volume.yaml for your NFS server and export.
+#   3. Create the credentials Secret (see secret.example.yaml; it isn't applied from here,
+#      so real passwords never live in this directory).
+#   4. Set runAsUser/runAsGroup in cronjob.yaml to the owner of the NFS export.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: db-backup
+
+resources:
+  - namespace.yaml
+  - nfs-volume.yaml
+  - cronjob.yaml
+
+configMapGenerator:
+  - name: db-backup-config
+    files:
+      - config.yaml
+
+images:
+  - name: ghcr.io/arkane-systems/db-backup
+    newTag: "0.1.0"
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: db-backup
+    includeSelectors: false

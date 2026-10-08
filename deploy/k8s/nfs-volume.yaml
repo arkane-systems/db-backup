@@ -1,0 +1,32 @@
+# A static NFS PersistentVolume, bound to this deployment's claim. If your cluster
+# has an NFS CSI driver or provisioner, a claim against its StorageClass works too.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: db-backup-nfs
+spec:
+  capacity:
+    storage: 500Gi
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  # "hard": a soft mount can turn a server hiccup into a silently short write.
+  mountOptions: [nfsvers=4.1, hard]
+  nfs:
+    server: nfs.example.lan       # CHANGE ME
+    path: /export/db-backups      # CHANGE ME
+  claimRef:
+    namespace: db-backup
+    name: db-backup-nfs
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-backup-nfs
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ""
+  volumeName: db-backup-nfs
+  resources:
+    requests:
+      storage: 500Gi

@@ -1,0 +1,49 @@
+# Integration-test config: the compose.yaml servers.
+backup_root: /backups
+
+defaults:
+  retention: {daily: 3, weekly: 2, monthly: 2}
+  retries: 0
+  retry_delay_s: 0
+
+mqtt:
+  host: mosquitto
+  topic_prefix: dbbackup-test
+  ha_discovery: true
+
+targets:
+  - name: pg
+    type: postgres
+    host: postgres
+    username: dbbackup
+    password_env: PG_PASSWORD
+    exclude: [scratch]
+    jobs: 2
+
+  - name: maria
+    type: mariadb
+    host: mariadb
+    username: dbbackup
+    password_file: /run/secrets/dbbackup/mariadb-password
+    exclude: [scratch]
+
+  # Whole-instance dump with --oplog.
+  - name: mongo
+    type: mongodb
+    host: mongodb
+    username: dbbackup
+    password_env: MONGO_PASSWORD
+    uri_options: {replicaSet: rs0}
+
+  # Per-database dumps, because of the exclude.
+  - name: mongo-filtered
+    type: mongodb
+    uri_env: MONGO_URI
+    exclude: [scratch]
+
+  # Unreachable: must fail without affecting the others.
+  - name: broken
+    type: postgres
+    host: no-such-host.invalid
+    username: nobody
+    password_env: PG_PASSWORD
