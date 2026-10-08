@@ -1,0 +1,47 @@
+# db-backup configuration. Secrets are never written here: each *_env names an
+# environment variable, filled from the db-backup-credentials Secret.
+backup_root: /backups
+
+defaults:
+  # GFS: keep the newest backup from each of the last 7 days, 4 ISO weeks and
+  # 6 months (and optionally `yearly` years, and the `last` N outright).
+  retention: {daily: 7, weekly: 4, monthly: 6, yearly: 0}
+  compression_level: 3        # zstd, 1-19
+  retries: 1                  # per target
+  retry_delay_s: 60
+  stale_partial_hours: 24     # abandoned .partial sets older than this are removed
+  lock_stale_hours: 24        # a lock older than this is assumed abandoned
+
+mqtt:
+  host: mqtt.example.lan      # CHANGE ME
+  port: 1883
+  username: dbbackup
+  password_env: MQTT_PASSWORD
+  topic_prefix: dbbackup
+  ha_discovery: true
+
+targets:
+  - name: mariadb-main
+    type: mariadb
+    host: mariadb.example.lan   # CHANGE ME
+    username: dbbackup
+    password_env: MARIADB_PASSWORD
+    # Every database is backed up unless listed here (or limited with `include`).
+    exclude: []
+
+  - name: postgres-main
+    type: postgres
+    host: postgres.example.lan  # CHANGE ME
+    username: dbbackup
+    password_env: POSTGRES_PASSWORD
+    jobs: 2                     # parallel pg_dump workers per database
+    # sslmode: verify-full
+
+  - name: mongodb-main
+    type: mongodb
+    host: mongodb.example.lan   # CHANGE ME
+    username: dbbackup
+    password_env: MONGODB_PASSWORD
+    uri_options:
+      replicaSet: rs0           # CHANGE ME (or directConnection: "true")
+      # readPreference: secondaryPreferred

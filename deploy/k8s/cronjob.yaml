@@ -1,0 +1,71 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup
+spec:
+  schedule: "15 2 * * *"
+  timeZone: Etc/UTC
+  # Never two runs at once (the tool also takes a per-target lock on the share).
+  concurrencyPolicy: Forbid
+  # If the cluster was down at 02:15, still run when it's back, up to an hour late.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      # No pod-level retries: they'd re-run every target. The tool retries each
+      # failed target itself (defaults.retries), and reports failures over MQTT.
+      backoffLimit: 0
+      activeDeadlineSeconds: 14400
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: db-backup
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            # Must be able to write to the NFS export: set these to its owner.
+            # (fsGroup doesn't help here, as NFS volumes aren't chowned.)
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: db-backup
+              image: ghcr.io/arkane-systems/db-backup
+              args: [backup]
+              envFrom:
+                - secretRef:
+                    name: db-backup-credentials
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/dbbackup
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: config
+              configMap:
+                name: db-backup-config
+            - name: backups
+              persistentVolumeClaim:
+                claimName: db-backup-nfs
+            - name: tmp
+              emptyDir:
+                sizeLimit: 1Gi
