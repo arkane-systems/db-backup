@@ -36,9 +36,10 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 RUN pip install --no-cache-dir . \
-    && useradd --system --uid 10001 --user-group --home-dir /nonexistent --shell /usr/sbin/nologin dbbackup
+    && groupadd --gid 1004 dbbackup \
+    && useradd --uid 1004 --gid 1004 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin dbbackup
 
-USER 10001
+USER 1004:1004
 ENTRYPOINT ["dbbackup"]
 CMD ["backup"]
 
@@ -48,6 +49,6 @@ FROM runtime AS test
 USER root
 RUN pip install --no-cache-dir "pytest>=8"
 COPY tests ./tests
-USER 10001
+USER 1004:1004
 ENTRYPOINT []
 CMD ["python", "-m", "pytest", "-p", "no:cacheprovider", "-m", "integration", "-v", "tests/integration"]

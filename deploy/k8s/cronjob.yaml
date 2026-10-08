@@ -29,8 +29,8 @@ spec:
             runAsNonRoot: true
             # Must be able to write to the NFS export: set these to its owner.
             # (fsGroup doesn't help here, as NFS volumes aren't chowned.)
-            runAsUser: 10001
-            runAsGroup: 10001
+            runAsUser: 1004
+            runAsGroup: 1004
             seccompProfile:
               type: RuntimeDefault
           containers:

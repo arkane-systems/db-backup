@@ -161,5 +161,5 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-      - /backups:uid=10001,gid=10001
+      - /backups:uid=1004,gid=1004
     depends_on: *db-deps
