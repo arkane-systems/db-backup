@@ -1,20 +1,24 @@
-"""Command-line interface: ``dbbackup backup|list|verify|prune|restore``."""
+"""Command-line interface: ``dbbackup backup|list|verify|prune|restore|inspect|restore-test``."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import shlex
 import sys
 from datetime import timedelta
+from pathlib import Path
 
 from . import __version__
 from .config import ConfigError, load_config
 from .engines import Connection, EngineError, engine_for
 from .notify import publish_statuses
 from .proc import CommandError
+from .restoretest import DEFAULT_TOLERANCE, run_restore_test, target_for_set
 from .runner import backup_targets, human_size
-from .storage import StorageError, Store, verify_checksums
+from .storage import StorageError, Store, open_set, verify_checksums
 
 log = logging.getLogger("dbbackup")
 
@@ -83,6 +87,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-globals", action="store_true", help="don't restore users/roles")
     p.add_argument("--force", action="store_true", help="replace databases that already exist")
     p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("inspect", help="describe a backup set (no config needed)")
+    p.add_argument("path", help="a set directory, or a target directory (then --set picks the set)")
+    p.add_argument("--set", default="latest", help="with a target directory: 'latest' (default) or a timestamp")
+    p.add_argument("--format", choices=["text", "env", "json"], default="text", help="env: shell-quoted KEY=value lines")
+    p.set_defaults(func=cmd_inspect)
+
+    p = sub.add_parser("restore-test", help="restore a set into a scratch server and check it against the backup's inventory")
+    p.add_argument("path", help="a set directory, or a target directory (then --set picks the set)")
+    p.add_argument("--set", default="latest", help="with a target directory: 'latest' (default) or a timestamp")
+    p.add_argument("--host", help="the scratch server")
+    p.add_argument("--port", type=int, help="its port (default: the server type's)")
+    p.add_argument("--username", help="an admin user on the scratch server")
+    p.add_argument("--password-env", metavar="VAR", help="environment variable holding that user's password")
+    p.add_argument("--uri-env", metavar="VAR", help="MongoDB: environment variable holding the scratch server's URI")
+    p.add_argument(
+        "--tolerance",
+        type=float,
+        default=DEFAULT_TOLERANCE,
+        help=f"allowed relative difference in estimated row counts (default {DEFAULT_TOLERANCE})",
+    )
+    p.set_defaults(func=cmd_restore_test)
 
     return parser
 
@@ -162,29 +188,8 @@ def cmd_restore(args) -> int:
     store = Store(config.backup_root)
     bset = store.find(target.name, args.set)
 
-    conn = Connection.for_target(target)
-    if overriding:
-        password = None
-        if args.password_env:
-            if args.password_env not in os.environ:
-                raise ConfigError(f"--password-env: environment variable {args.password_env} is not set")
-            password = os.environ[args.password_env]
-        uri = None
-        if args.uri_env:
-            if target.type != "mongodb":
-                raise ConfigError("--uri-env is only for mongodb targets")
-            if args.uri_env not in os.environ:
-                raise ConfigError(f"--uri-env: environment variable {args.uri_env} is not set")
-            uri = os.environ[args.uri_env]
-        conn = Connection(
-            # A URI says where it points; don't leave the target's host around to mislead the logs.
-            host=None if uri else (args.host or target.host),
-            port=args.port or target.port,
-            username=args.username or target.username,
-            password=password,
-            uri=uri,
-        )
-    elif args.port:
+    conn = connection_from_args(args, target) if overriding else Connection.for_target(target)
+    if args.port and not overriding:
         conn = conn.overridden(port=args.port)
 
     problems = verify_checksums(bset)
@@ -211,6 +216,88 @@ def cmd_restore(args) -> int:
         log.warning("%s: %s", target.name, warning)
     log.info("%s: restore complete%s", target.name, f" with {len(warnings)} warning(s)" if warnings else "")
     return EXIT_OK
+
+
+def connection_from_args(args, target) -> Connection:
+    """The connection given by --host/--port/--username/--password-env/--uri-env, defaulting to the target's."""
+    password = None
+    if args.password_env:
+        if args.password_env not in os.environ:
+            raise ConfigError(f"--password-env: environment variable {args.password_env} is not set")
+        password = os.environ[args.password_env]
+    uri = None
+    if args.uri_env:
+        if target.type != "mongodb":
+            raise ConfigError("--uri-env is only for mongodb targets")
+        if args.uri_env not in os.environ:
+            raise ConfigError(f"--uri-env: environment variable {args.uri_env} is not set")
+        uri = os.environ[args.uri_env]
+    return Connection(
+        # A URI says where it points; don't leave the target's host around to mislead the logs.
+        host=None if uri else (args.host or target.host),
+        port=args.port or target.port,
+        username=args.username or target.username,
+        password=password,
+        uri=uri,
+    )
+
+
+def cmd_inspect(args) -> int:
+    bset = open_set(Path(args.path), args.set)
+    if not bset.ok:
+        raise StorageError(f"{bset.path} has no valid manifest")
+    m = bset.manifest
+    if args.format == "json":
+        print(json.dumps({k: v for k, v in m.items() if k != "files"}, indent=2, sort_keys=True))
+    elif args.format == "env":
+        values = {
+            "DBB_TARGET": m["target"],
+            "DBB_TYPE": m["type"],
+            "DBB_SET": bset.name,
+            "DBB_SERVER_VERSION": m.get("server_version", ""),
+            "DBB_DATABASES": str(len(m.get("databases", []))),
+            "DBB_SIZE_BYTES": str(m.get("size_bytes", "")),
+        }
+        for key, value in values.items():
+            print(f"{key}={shlex.quote(value)}")
+    else:
+        print(f"target:   {m['target']} ({m['type']} {m.get('server_version', '?')}, {m.get('host') or 'URI'})")
+        print(f"set:      {bset.name}  finished {m.get('finished')}  ({human_size(m.get('size_bytes'))}, {m.get('duration_s')}s)")
+        print(f"contents: {', '.join(m.get('databases', [])) or '(no databases)'}")
+        for warning in m.get("warnings", []):
+            print(f"warning:  {warning}")
+    return EXIT_OK
+
+
+def cmd_restore_test(args) -> int:
+    bset = open_set(Path(args.path), args.set)
+    if not bset.ok:
+        raise StorageError(f"{bset.path} has no valid manifest")
+    target = target_for_set(bset)
+    if not (args.host or args.uri_env):
+        raise ConfigError("restore-test needs the scratch server: --host (with --username/--password-env), or --uri-env")
+    report = run_restore_test(bset, connection_from_args(args, target), tolerance=args.tolerance)
+
+    name = f"{report.target}/{report.set}"
+    for warning in report.restore_warnings:
+        log.warning("%s: restore: %s", name, warning)
+    for note in report.check.notes:
+        log.info("%s: %s", name, note)
+    for warning in report.check.warnings:
+        log.warning("%s: %s", name, warning)
+    for error in report.check.errors:
+        log.error("%s: %s", name, error)
+    c = report.check
+    summary = (
+        f"{len(bset.manifest['databases'])} database(s) restored in {report.restore_seconds:.1f}s; "
+        f"checked {c.objects_checked} object(s), {c.counts_checked} row count(s), {c.users_checked} user(s)/role(s): "
+        f"{len(c.errors)} error(s), {len(c.warnings) + len(report.restore_warnings)} warning(s)"
+    )
+    if report.passed:
+        log.info("%s: PASSED: %s", name, summary)
+        return EXIT_OK
+    log.error("%s: FAILED: %s", name, summary)
+    return EXIT_FAILED
 
 
 if __name__ == "__main__":

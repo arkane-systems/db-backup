@@ -99,7 +99,7 @@ def backup_once(store: Store, target: Target) -> BackupSet:
     if not databases:
         warnings.append("no databases selected; only server-level objects (users/roles) were backed up")
     log.info("%s: server %s, %d database(s): %s", target.name, version, len(databases), ", ".join(databases))
-    inventory = engine.inventory(databases)
+    inventory = engine.inventory(databases, exact=target.exact_counts)
 
     partial = store.begin(target.name, started)
     try:

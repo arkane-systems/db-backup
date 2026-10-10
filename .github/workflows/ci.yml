@@ -28,6 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: make integration
+      - run: make restore-test-check
       - if: failure()
         run: docker compose logs --no-color
       - if: always()

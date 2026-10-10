@@ -69,7 +69,7 @@ class MongoDBEngine(Engine):
         with self._client() as client:
             return sorted(d for d in client.list_database_names() if d not in SYSTEM_DATABASES)
 
-    def inventory(self, databases: list[str]) -> dict:
+    def inventory(self, databases: list[str], *, exact: bool = False) -> dict:
         from pymongo.errors import OperationFailure
 
         result = {}
@@ -80,7 +80,11 @@ class MongoDBEngine(Engine):
                     name, ctype = coll["name"], coll.get("type", "collection")
                     if name.startswith("system."):
                         continue
-                    rows = client[db][name].estimated_document_count() if ctype == "collection" else None
+                    rows = None
+                    if ctype == "collection":
+                        # The estimate is collection metadata, normally accurate; exact means a scan.
+                        collection = client[db][name]
+                        rows = collection.count_documents({}) if exact else collection.estimated_document_count()
                     objects[name] = {"kind": ctype, "rows": rows}
                 result[db] = {"objects": objects}
             try:
@@ -89,7 +93,7 @@ class MongoDBEngine(Engine):
             except OperationFailure as e:
                 log.warning("%s: can't list users (%s); restore checks will skip them", self.target.name, e)
                 users = None
-        return {"databases": result, "users": users}
+        return {"counts": "exact" if exact else "estimated", "databases": result, "users": users}
 
     # -- backup ----------------------------------------------------------------
 

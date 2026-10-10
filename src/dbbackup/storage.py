@@ -205,6 +205,18 @@ class Store:
         return doomed
 
 
+def open_set(path: Path, which: str = "latest") -> BackupSet:
+    """A set given by its directory, or by its target's directory (then ``which``: 'latest' or a set name)."""
+    path = Path(path)
+    if (path / MANIFEST).is_file():
+        if not TS_RE.match(path.name):
+            raise StorageError(f"{path} is not named like a backup set ({TS_FORMAT})")
+        return BackupSet(path.parent.name, parse_ts(path.name), path, _load_manifest(path))
+    if path.is_dir():
+        return Store(path.parent).find(path.name, which)
+    raise StorageError(f"{path} is neither a backup set nor a target directory")
+
+
 def checksum_tree(root: Path) -> dict[str, dict]:
     files = {}
     for path in sorted(root.rglob("*")):

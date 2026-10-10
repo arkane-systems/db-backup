@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dbbackup"
-version = "0.1.1"
+version = "0.2.0"
 description = "Containerized logical backups of MariaDB, PostgreSQL and MongoDB servers, with GFS retention"
 readme = "README.md"
 license = "MIT"

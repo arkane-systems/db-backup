@@ -129,3 +129,15 @@ def test_mqtt_defaults():
     raw["mqtt"] = {"host": "mq", "tls": True, "topic_prefix": "x/y/"}
     mqtt = parse_config(raw, ENV).mqtt
     assert (mqtt.port, mqtt.topic_prefix) == (8883, "x/y")
+
+
+def test_exact_counts_default_and_override():
+    raw = minimal()
+    raw["targets"].append({"name": "two", "type": "mariadb", "host": "h", "exact_counts": True})
+    assert [t.exact_counts for t in parse_config(raw, ENV).targets] == [False, True]
+    raw["defaults"] = {"exact_counts": True}
+    raw["targets"][1]["exact_counts"] = False
+    assert [t.exact_counts for t in parse_config(raw, ENV).targets] == [True, False]
+    raw["targets"][1]["exact_counts"] = "yes"
+    with pytest.raises(ConfigError, match="must be true or false"):
+        parse_config(raw, ENV)

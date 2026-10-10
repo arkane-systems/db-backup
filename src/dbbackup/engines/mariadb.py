@@ -138,15 +138,27 @@ class MariaDBEngine(Engine):
             f"WHERE TABLE_SCHEMA IN ({schemas})"
         )
 
-    def inventory(self, databases: list[str]) -> dict:
+    def inventory(self, databases: list[str], *, exact: bool = False) -> dict:
         result = {db: {"objects": {}} for db in databases}
-        for schema, name, ttype, _engine, rows in self._tables(databases):
+        countable = []
+        for schema, name, ttype, engine, rows in self._tables(databases):
             kind = TABLE_KINDS.get(ttype, ttype.lower())
-            result[schema]["objects"][name] = {"kind": kind, "rows": int(rows) if rows is not None and kind == "table" else None}
+            # InnoDB's TABLE_ROWS is a statistics estimate that can be off by orders of
+            # magnitude (e.g. right after a bulk load), so don't record it; other
+            # engines' (Aria, MyISAM) are exact.
+            estimate = int(rows) if kind == "table" and rows is not None and engine != "InnoDB" else None
+            result[schema]["objects"][name] = {"kind": kind, "rows": None if exact else estimate}
+            if exact and kind == "table":
+                countable.append((schema, name))
+        if countable:
+            sql = " UNION ALL ".join(f"SELECT {i}, COUNT(*) FROM {quote_ident(s)}.{quote_ident(n)}" for i, (s, n) in enumerate(countable))
+            for i, count in self.query(sql):
+                schema, name = countable[int(i)]
+                result[schema]["objects"][name]["rows"] = int(count)
         users = sorted(
             name if is_role == "Y" else f"{name}@{host}" for name, host, is_role in self.query("SELECT User, Host, is_role FROM mysql.user")
         )
-        return {"databases": result, "users": users}
+        return {"counts": "exact" if exact else "estimated", "databases": result, "users": users}
 
     # -- backup ----------------------------------------------------------------
 
