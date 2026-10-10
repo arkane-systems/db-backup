@@ -74,6 +74,7 @@ class Target:
     ssl: bool | None  # mariadb: None = client default, True = --ssl, False = --skip-ssl
     uri_options: dict[str, str]  # mongodb: extra URI query options when built from host/port
     dump_args: tuple[str, ...]  # extra args appended to each per-database dump command
+    exact_counts: bool = False  # record COUNT(*)s in the inventory (scans every table) instead of estimates
 
 
 @dataclass(frozen=True)
@@ -133,7 +134,7 @@ def parse_config(raw: Any, environ: dict[str, str], *, secrets_for: Collection[s
     defaults = raw.get("defaults") or {}
     _check_keys(
         defaults,
-        {"retention", "compression_level", "retries", "retry_delay_s", "stale_partial_hours", "lock_stale_hours", "jobs"},
+        {"retention", "compression_level", "retries", "retry_delay_s", "stale_partial_hours", "lock_stale_hours", "jobs", "exact_counts"},
         "defaults",
     )
     base_retention = Retention().merged(defaults.get("retention"), "defaults.retention")
@@ -191,6 +192,7 @@ def _parse_target(
             "ssl",
             "uri_options",
             "dump_args",
+            "exact_counts",
         },
         where,
     )
@@ -255,6 +257,7 @@ def _parse_target(
         ssl=ssl,
         uri_options={str(k): str(v) for k, v in uri_options.items()},
         dump_args=_str_list(rt, "dump_args", where),
+        exact_counts=_bool(rt, "exact_counts", _bool(defaults, "exact_counts", False, "defaults"), where),
     )
 
 
@@ -326,6 +329,13 @@ def _int(section: dict, key: str, default: int, where: str, minimum: int | None 
         raise ConfigError(f"{where}.{key}: must be an integer")
     if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
         raise ConfigError(f"{where}.{key}: must be between {minimum} and {maximum}" if maximum else f"{where}.{key}: must be >= {minimum}")
+    return value
+
+
+def _bool(section: dict, key: str, default: bool, where: str) -> bool:
+    value = section.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{where}.{key}: must be true or false")
     return value
 
 

@@ -11,6 +11,9 @@ defaults:
   retry_delay_s: 60
   stale_partial_hours: 24     # abandoned .partial sets older than this are removed
   lock_stale_hours: 24        # a lock older than this is assumed abandoned
+  # Record exact row counts (a COUNT(*) of every table, each night) for restore
+  # tests to check, rather than cheap estimates. MariaDB/InnoDB has no usable estimate.
+  exact_counts: false
 
 mqtt:
   host: mqtt.example.lan      # CHANGE ME

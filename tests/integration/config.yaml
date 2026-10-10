@@ -26,6 +26,7 @@ targets:
     username: dbbackup
     password_file: /run/secrets/dbbackup/mariadb-password
     exclude: [scratch]
+    exact_counts: true
 
   # Whole-instance dump with --oplog.
   - name: mongo

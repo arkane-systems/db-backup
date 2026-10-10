@@ -5,7 +5,7 @@ This is the disaster-recovery runbook. It covers two cases:
 - **With the tool**: `dbbackup restore`, the quick path.
 - **With stock tools only**: `psql`, `pg_restore`, `mariadb`, `mongorestore` and `zstd`, for when the tool or its image isn't available. Nothing in a backup set needs this project to read it.
 
-Test restores before you need them. A backup that has never been restored is only a hope.
+Test restores before you need them. A backup that has never been restored is only a hope. [Testing restores](#testing-restores) shows how to do it routinely, on a workstation.
 
 ## Finding a backup set
 
@@ -68,7 +68,7 @@ spec:
       securityContext: {runAsNonRoot: true, runAsUser: 1004, runAsGroup: 1004}
       containers:
         - name: restore
-          image: ghcr.io/arkane-systems/db-backup:0.1.1
+          image: ghcr.io/arkane-systems/db-backup:0.2.0
           args: [restore, postgres-main, --host, new-postgres.example.lan, --username, postgres, --password-env, ADMIN_PASSWORD]
           env:
             - name: ADMIN_PASSWORD
@@ -85,7 +85,7 @@ spec:
 
 ```bash
 docker run --rm -v /mnt/db-backups:/backups:ro -v $PWD/config.yaml:/etc/dbbackup/config.yaml:ro \
-    -e ADMIN_PASSWORD ghcr.io/arkane-systems/db-backup:0.1.1 \
+    -e ADMIN_PASSWORD ghcr.io/arkane-systems/db-backup:0.2.0 \
     restore mariadb-main --host new-mariadb.example.lan --username root --password-env ADMIN_PASSWORD
 ```
 
@@ -169,3 +169,55 @@ zstd -dc admin.archive.zst | mongorestore --uri '...' --archive
 - **Point applications at the new server,** and check they can log in. Restored application accounts keep their old passwords.
 - **Check the restore against the backup's inventory.** The manifest's `inventory` lists every table and collection with an approximate row count, plus every user and role, as they were at backup time. It's a quick sanity check that nothing went missing.
 - **Update the backup config** if the server's address changed, so tonight's backup covers the new server.
+
+## Testing restores
+
+`scripts/restore-test.sh` proves a backup can actually be restored, without touching any real server and without using the cluster. It runs on any machine with Docker and the backup share mounted (or a copy of it):
+
+```bash
+scripts/restore-test.sh /mnt/db-backups                         # the latest set of every target
+scripts/restore-test.sh /mnt/db-backups postgres-main           # just one target
+scripts/restore-test.sh --set 20261009T021500Z /mnt/db-backups mariadb-main
+```
+
+For each target, the script:
+
+1. Reads the set's manifest, using the db-backup image, and starts a throwaway scratch server matching the backed-up server's version: `postgres:<major>`, `mariadb:<major.minor>` or `mongo:<major.minor>`. MongoDB runs as a single-node replica set, so the oplog is replayed as it would be in production. Each scratch server has its own compose project and network, and nothing is published on the host.
+2. Runs `dbbackup restore-test`, which:
+   - re-checks every file's checksum, and the dumps' integrity
+   - restores the set exactly as `dbbackup restore` would, users and roles included
+   - compares the restored server with the inventory recorded at backup time
+3. Removes the scratch server and its data (unless you pass `--keep`), and goes on to the next target.
+
+The comparison treats these as **errors**:
+
+- a database missing from the restored server
+- a missing table, view, materialized view or collection
+- a missing user or role
+- an object restored as a different kind (say, a view that came back as a table)
+
+Row-count differences are only **warnings**. The restored server is always counted exactly; what it's compared with depends on the target's `exact_counts` setting:
+
+- **`exact_counts: true`.** The set recorded a `COUNT(*)` of every table, just before the dump, and the counts must match exactly. Writes between the count and the dump's snapshot show up as small differences.
+- **The default.** The set recorded the servers' cheap estimates (`pg_class.reltuples`, `estimatedDocumentCount`, and Aria/MyISAM row counts), and a difference of more than 25% (and more than 100 rows) is reported. InnoDB's estimate (`TABLE_ROWS`) can be off by orders of magnitude, for example straight after a bulk load, so MariaDB InnoDB tables have no recorded count: only their presence is checked, unless you set `exact_counts`. Sets made by 0.1.x recorded those InnoDB estimates anyway; their MariaDB counts are skipped, with a note saying why.
+
+The run ends with a summary table, including how long each restore took, which is a rough figure for how long recovery would take. The script exits non-zero if any target fails.
+
+| Option | Effect |
+|---|---|
+| `-s`, `--set SET` | Test this set instead of the latest. |
+| `-i`, `--image IMAGE` | The db-backup image to use (default `$DBBACKUP_IMAGE`, else `ghcr.io/arkane-systems/db-backup:latest`). |
+| `-b`, `--build` | Build the image from the checkout instead. |
+| `-t`, `--tmpfs` | Keep the scratch servers' data in RAM. Faster, but the restored data must fit in memory. |
+| `-k`, `--keep` | Leave each scratch server running afterwards, to look around in. The script prints how to remove it. |
+
+To use a scratch image other than the one matching the recorded version, set `SCRATCH_IMAGE_POSTGRES`, `SCRATCH_IMAGE_MARIADB` or `SCRATCH_IMAGE_MONGODB`. For example, `SCRATCH_IMAGE_POSTGRES=postgres:19` rehearses an upgrade.
+
+The backups are mounted read-only, and are read as the backup root's owner (`pg_dump`'s directory archives are private to their owner).
+
+To restore-test one set by hand against a server you've started yourself:
+
+```bash
+dbbackup inspect /backups/postgres-main               # what's in the latest set
+dbbackup restore-test /backups/postgres-main --host scratch --username postgres --password-env SCRATCH_PASSWORD
+```

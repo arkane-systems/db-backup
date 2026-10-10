@@ -1,0 +1,92 @@
+# Scratch servers for restore testing; driven by scripts/restore-test.sh, which
+# starts one scratch server per target in its own throwaway compose project,
+# restores into it, checks the result, and removes everything (`down -v`).
+#
+# Set by the script:
+#   BACKUP_ROOT      the backup share (mounted read-only)
+#   SCRATCH_IMAGE    the scratch server's image, matching the backed-up server's version
+#   SCRATCH_STORAGE  "volume" (default: an anonymous volume) or "tmpfs" (RAM: faster, but the
+#                    restored data must fit in memory)
+#   DBBACKUP_IMAGE   the db-backup image to test with
+#   RUN_AS           uid:gid to read the backups as (the backup root's owner)
+#
+# Nothing is published on the host: the scratch servers are reachable only on
+# the project's own network.
+
+x-scratch-env: &scratch-env
+  # Throwaway credentials for throwaway servers.
+  SCRATCH_PASSWORD: restore-test
+  SCRATCH_MONGO_URI: mongodb://root:restore-test@scratch-mongodb:27017/?authSource=admin&directConnection=true
+
+services:
+  scratch-postgres:
+    profiles: [postgres]
+    image: ${SCRATCH_IMAGE:-postgres:18}
+    environment:
+      POSTGRES_PASSWORD: restore-test
+    volumes:
+      - type: ${SCRATCH_STORAGE:-volume}
+        target: /var/lib/postgresql
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres]
+      interval: 2s
+      retries: 60
+
+  scratch-mariadb:
+    profiles: [mariadb]
+    image: ${SCRATCH_IMAGE:-mariadb:11.4}
+    environment:
+      MARIADB_ROOT_PASSWORD: restore-test
+    volumes:
+      - type: ${SCRATCH_STORAGE:-volume}
+        target: /var/lib/mysql
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 2s
+      retries: 60
+
+  scratch-mongodb:
+    profiles: [mongodb]
+    image: ${SCRATCH_IMAGE:-mongo:8.3}
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: restore-test
+    # A single-node replica set, so --oplogReplay restores behave as in production.
+    # Replica sets with auth need a keyfile; make a throwaway one.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        openssl rand -base64 756 > /tmp/keyfile && chmod 400 /tmp/keyfile && chown mongodb:mongodb /tmp/keyfile
+        exec docker-entrypoint.sh "$$@"
+      - --
+    command: [mongod, --replSet, rs0, --keyFile, /tmp/keyfile, --bind_ip_all]
+    volumes:
+      - type: ${SCRATCH_STORAGE:-volume}
+        target: /data/db
+      - type: ${SCRATCH_STORAGE:-volume}
+        target: /data/configdb
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - -u
+        - root
+        - -p
+        - restore-test
+        - --eval
+        - "try { rs.status().myState === 1 ? 0 : quit(1) } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'scratch-mongodb:27017'}]}); quit(1) }"
+      interval: 3s
+      retries: 60
+
+  # The tool, with the backups mounted read-only; always run with --no-deps.
+  restore-test:
+    profiles: [tool]
+    image: ${DBBACKUP_IMAGE:-ghcr.io/arkane-systems/db-backup:latest}
+    user: ${RUN_AS:-1004:1004}
+    read_only: true
+    tmpfs: [/tmp]
+    environment: *scratch-env
+    volumes:
+      - ${BACKUP_ROOT:?BACKUP_ROOT must be set}:/backups:ro

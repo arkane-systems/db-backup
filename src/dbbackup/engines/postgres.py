@@ -105,11 +105,12 @@ class PostgresEngine(Engine):
         """Superusers, and members of pg_read_all_data, can read pg_authid and so dump role passwords."""
         return self.query("SELECT has_table_privilege('pg_catalog.pg_authid', 'SELECT')")[0][0] == "t"
 
-    def inventory(self, databases: list[str]) -> dict:
+    def inventory(self, databases: list[str], *, exact: bool = False) -> dict:
         result = {}
         for db in databases:
             rows = self.query(
-                r"""SELECT n.nspname, c.relname, c.relkind, c.reltuples::bigint
+                r"""SELECT n.nspname, c.relname, c.relkind, c.reltuples::bigint, c.relispopulated,
+                           quote_ident(n.nspname) || '.' || quote_ident(c.relname)
                     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
                       AND n.nspname NOT IN ('pg_catalog', 'information_schema')
@@ -117,12 +118,22 @@ class PostgresEngine(Engine):
                 db=db,
             )
             objects = {}
-            for schema, name, kind, tuples in rows:
-                rows_est = int(tuples) if kind in ("r", "p", "m") and int(tuples) >= 0 else None
-                objects[f"{schema}.{name}"] = {"kind": RELKINDS[kind], "rows": rows_est}
+            countable = []
+            for schema, name, kind, tuples, populated, qualified in rows:
+                key = f"{schema}.{name}"
+                has_rows = kind in ("r", "p", "m") and populated == "t"
+                # reltuples is -1 until the table is first vacuumed or analyzed.
+                estimate = int(tuples) if has_rows and int(tuples) >= 0 else None
+                objects[key] = {"kind": RELKINDS[kind], "rows": None if exact else estimate}
+                if exact and has_rows:
+                    countable.append((key, qualified))
+            if countable:
+                sql = " UNION ALL ".join(f"SELECT {i}, count(*) FROM {qualified}" for i, (_, qualified) in enumerate(countable))
+                for i, count in self.query(sql, db=db):
+                    objects[countable[int(i)][0]]["rows"] = int(count)
             result[db] = {"objects": objects}
         users = [r[0] for r in self.query("SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname")]
-        return {"databases": result, "users": users}
+        return {"counts": "exact" if exact else "estimated", "databases": result, "users": users}
 
     # -- backup ----------------------------------------------------------------
 

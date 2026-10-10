@@ -12,6 +12,7 @@ A containerized database backup solution: logical backups of any number of **Mar
 - **Isolates failures.** One server's failure never stops the others. A target is pruned only after one of its own backups succeeds, and the newest good set is always kept.
 - **Reports to MQTT,** with Home Assistant discovery. Failures, and backups that have *stopped happening*, can raise [Alert Redux](https://github.com/arkane-systems/ha-alert-redux) alerts; see [docs/home-assistant.md](docs/home-assistant.md).
 - **Restores with one command,** `dbbackup restore`. Every set can also be restored with stock client tools; see [docs/restore.md](docs/restore.md).
+- **Tests restores locally.** `scripts/restore-test.sh` restores sets into throwaway Docker servers of the matching version, and checks every database, table, collection, user and role against what the backup recorded.
 
 Supported servers: MariaDB 11.4+, PostgreSQL 18+, MongoDB 8.3+ (as a replica set, for `--oplog`). Older versions may well work: the tool logs a warning and carries on. The image ships the PostgreSQL 18 client, the MariaDB 11.8 client and MongoDB Database Tools 100.19. It is built for linux/amd64 only, because MongoDB publishes its Debian tools packages only for x86-64.
 
@@ -64,6 +65,7 @@ Secrets never go in the file. Each one is named by an environment variable (`pas
 | `uri_env`/`uri_file` | mongodb target | (none) | A full connection URI, instead of host/port/username. |
 | `uri_options` | mongodb target | (none) | Extra URI options when connecting by host, e.g. `replicaSet: rs0`. |
 | `dump_args` | target | (none) | Extra arguments for each per-database dump command. |
+| `exact_counts` | `defaults` or target | `false` | Record exact `COUNT(*)` row counts in each set's inventory, for restore tests to check. This scans every table at backup time. Otherwise the cheap estimates are recorded; MariaDB's InnoDB estimates are too unreliable, so they're left out. |
 | `mqtt` | top level | (none) | `host`, `port`, `username`, `password_env`/`password_file`, `tls`, `topic_prefix` (`dbbackup`), `ha_discovery` (`false`), `discovery_prefix` (`homeassistant`). |
 
 For MongoDB, `include` or `exclude` changes how the backup is made. `mongodump` can't leave databases out of a whole-instance dump, so such a target gets one archive per database instead. Those dumps can't use `--oplog`, so they are consistent only per collection, and the manifest records a warning saying so. Leave both unset for point-in-time consistency.
@@ -129,7 +131,12 @@ dbbackup verify  [TARGET ...] [--set S | --all]   re-check checksums and dump in
 dbbackup prune   [TARGET ...] [--dry-run]         apply retention without backing up
 dbbackup restore TARGET [--set S] [-d DB ...] [--host H --port P --username U --password-env VAR | --uri-env VAR]
                         [--no-globals] [--force]
+dbbackup inspect PATH [--set S] [--format text|env|json]  describe a set (PATH: a set or target directory; no config needed)
+dbbackup restore-test PATH [--set S] (--host H --username U --password-env VAR | --uri-env VAR) [--tolerance F]
+                        restore a set into a scratch server and check it against the backup's inventory
 ```
+
+To test restores routinely, without touching real servers or the cluster, run `scripts/restore-test.sh /path/to/backups` on any machine with Docker. It restores each target's latest set into a throwaway server of the matching version, checks the result, and cleans up. See [docs/restore.md](docs/restore.md#testing-restores).
 
 Exit status: 0 on success, 1 if anything failed, 2 for configuration or usage errors.
 
@@ -139,6 +146,7 @@ Exit status: 0 on success, 1 if anything failed, 2 for configuration or usage er
 make venv          # .venv with the package, pytest and ruff
 make lint test     # ruff, and unit tests (no servers needed)
 make integration   # start compose.yaml's servers, then back up and restore them for real
+make restore-test-check   # back up those servers, then run scripts/restore-test.sh on the result
 make stack-down    # remove the test servers
 ```
 

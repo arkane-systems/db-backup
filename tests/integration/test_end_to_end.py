@@ -145,6 +145,7 @@ def test_postgres_manifest():
     m = manifest("pg")
     assert m["databases"] == ["app1", "odd.name/db", "postgres"]  # scratch excluded
     assert m["contents"]["role_passwords"] is True  # pg_read_all_data can read pg_authid
+    assert m["inventory"]["counts"] == "estimated"
     assert m["server_version"].startswith("18.")
     objects = m["inventory"]["databases"]["app1"]["objects"]
     assert objects["billing.invoices"] == {"kind": "table", "rows": 20000}
@@ -157,6 +158,10 @@ def test_mariadb_manifest():
     m = manifest("maria")
     assert m["databases"] == ["shop", "wiki-db"]
     assert any("shop.legacy_log uses Aria" in w for w in m["warnings"])
+    # exact_counts: real COUNT(*)s, where InnoDB's TABLE_ROWS estimate can be wildly off.
+    assert m["inventory"]["counts"] == "exact"
+    assert m["inventory"]["databases"]["shop"]["objects"]["products"] == {"kind": "table", "rows": 3000}
+    assert m["inventory"]["databases"]["wiki-db"]["objects"]["pages"]["rows"] == 500
     assert {"shop_app@%", "wiki_ro@%", "reporting"} <= set(m["inventory"]["users"])
 
 

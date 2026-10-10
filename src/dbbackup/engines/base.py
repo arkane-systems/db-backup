@@ -60,10 +60,12 @@ class Engine(ABC):
         """Every user database on the server, system databases excluded."""
 
     @abstractmethod
-    def inventory(self, databases: list[str]) -> dict:
-        """Objects, approximate row counts and users, recorded so a restore can be checked against them.
+    def inventory(self, databases: list[str], *, exact: bool = False) -> dict:
+        """Objects, row counts and users, recorded so a restore can be checked against them.
 
-        Shape: ``{"databases": {db: {"objects": {name: {"kind": str, "rows": int | None}}}}, "users": [str] | None}``.
+        Shape: ``{"counts": "exact" | "estimated", "databases": {db: {"objects": {name: {"kind": str, "rows": int | None}}}},
+        "users": [str] | None}``. With ``exact``, row counts are COUNT(*)s (a scan of every table); otherwise they're
+        the server's cheap estimates, or None where those are too unreliable to record.
         """
 
     @abstractmethod
