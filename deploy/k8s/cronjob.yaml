@@ -4,6 +4,7 @@ metadata:
   name: db-backup
 spec:
   schedule: "15 2 * * *"
+  # The schedule's time zone: set your own (e.g. America/Chicago), or 02:15 is UTC.
   timeZone: Etc/UTC
   # Never two runs at once (the tool also takes a per-target lock on the share).
   concurrencyPolicy: Forbid
