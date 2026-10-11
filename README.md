@@ -120,7 +120,7 @@ kubectl -n db-backup create job --from=cronjob/db-backup db-backup-manual
 kubectl -n db-backup logs -f job/db-backup-manual
 ```
 
-The schedule is in `cronjob.yaml`. If you change it, adjust the staleness threshold in your Home Assistant alert to match.
+The schedule is in `cronjob.yaml`, along with its `timeZone`, which is `Etc/UTC` unless you change it: the default 02:15 is UTC, not your local time. Set it to your own zone, e.g. `timeZone: America/Chicago`. If you change the schedule, adjust the staleness threshold in your Home Assistant alert to match.
 
 ## Commands
 

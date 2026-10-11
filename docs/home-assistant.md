@@ -28,7 +28,10 @@ This fires as soon as a run reports a failure.
 | Targets → entity ID pattern | `sensor.dbbackup_*_status` |
 | Target state | `failed` |
 | Priority | Critical |
-| On message | `Backup of {{ state_attr(target, 'target') }} failed: {{ state_attr(target, 'error') }}` |
+| On message | `The backup of {{ state_attr(target, 'target') \| replace('-', ' ') \| replace('_', ' ') }} failed.` |
+| Card message | `Backup of {{ state_attr(target, 'target') }} failed: {{ state_attr(target, 'error') or 'no error recorded' }}` |
+
+The on message is the one that's sent, and announced if your notifications are spoken, so it stays a short sentence. Target names have their `-` and `_` turned into spaces, so they're read as words. The error itself, often a long and technical client-tool message, goes in the card message, where you can read it.
 
 It stops firing by itself once a later run of that target succeeds.
 
@@ -44,7 +47,9 @@ A CronJob that never runs reports nothing, so failure alerts alone can't catch i
 | Targets → entity ID pattern | `sensor.dbbackup_*_status` |
 | Template | see below |
 | Priority | Critical |
-| On message | `No successful backup of {{ state_attr(target, 'target') }} since {{ state_attr(target, 'last_success') or 'ever' }}` |
+| On message | see below |
+
+The template:
 
 ```jinja
 {% set last = state_attr(target, 'last_success') %}
@@ -52,6 +57,23 @@ A CronJob that never runs reports nothing, so failure alerts alone can't catch i
 ```
 
 The 26 hours suit a daily schedule: a day, plus slack for a long run. Use your interval plus a margin if you change the schedule. A target that has never succeeded counts as stale.
+
+The on message:
+
+```jinja
+{%- set last = state_attr(target, 'last_success') -%}
+{%- set name = state_attr(target, 'target') | replace('-', ' ') | replace('_', ' ') -%}
+{%- if last -%}
+  {%- set t = as_local(as_datetime(last)) -%}
+  {%- set days = (now().date() - t.date()).days -%}
+  {%- set day = 'today' if days == 0 else 'yesterday' if days == 1 else t.strftime('%A, %B %-d') -%}
+  No successful backup of {{ name }} since {{ day }} at {{ t.strftime('%-I:%M %p') }}.
+{%- else -%}
+  No successful backup of {{ name }} yet.
+{%- endif -%}
+```
+
+`last_success` is an ISO 8601 timestamp in UTC, such as `2026-10-10T02:15:19+00:00`. That's exact, but hard to read at a glance, and a speaker reads it out as a string of numbers. The message converts it to Home Assistant's local time zone and phrases it as speech: "No successful backup of postgres main since yesterday at 9:15 PM." Older timestamps read "since Tuesday, October 6 at 11:30 PM", and a target that has never succeeded reads "No successful backup of postgres main yet." For 24-hour time, use `%H:%M` instead of `%-I:%M %p`.
 
 ### Supersession
 
