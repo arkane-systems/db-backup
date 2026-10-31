@@ -210,7 +210,7 @@ The run ends with a summary table, including how long each restore took, which i
 | Option | Effect |
 |---|---|
 | `-s`, `--set SET` | Test this set instead of the latest. |
-| `-i`, `--image IMAGE` | The db-backup image to use (default `$DBBACKUP_IMAGE`, else `ghcr.io/arkane-systems/db-backup:latest`). |
+| `-i`, `--image IMAGE` | The db-backup image to use (default `$DBBACKUP_IMAGE`, else `ghcr.io/arkane-systems/db-backup:latest`). It's pulled first, so a tag like `latest` is current; an image that exists only locally is used as it is. |
 | `-b`, `--build` | Build the image from the checkout instead. |
 | `-t`, `--tmpfs` | Keep the scratch servers' data in RAM. Faster, but the restored data must fit in memory. |
 | `-k`, `--keep` | Leave each scratch server running afterwards, to look around in. The script prints how to remove it. |

@@ -14,6 +14,7 @@ from pathlib import Path
 from . import __version__
 from .config import ConfigError, load_config
 from .engines import Connection, EngineError, engine_for
+from .engines.base import version_tuple
 from .notify import publish_statuses
 from .proc import CommandError
 from .restoretest import DEFAULT_TOLERANCE, run_restore_test, target_for_set
@@ -280,6 +281,15 @@ def cmd_restore_test(args) -> int:
     target = target_for_set(bset)
     if not (args.host or args.uri_env):
         raise ConfigError("restore-test needs the scratch server: --host (with --username/--password-env), or --uri-env")
+    made_by = bset.manifest.get("tool_version", "")
+    if version_tuple(made_by) > version_tuple(__version__):
+        log.warning(
+            "%s/%s was made by dbbackup %s, newer than this one (%s): it may record things this version doesn't check",
+            bset.target,
+            bset.name,
+            made_by,
+            __version__,
+        )
     report = run_restore_test(bset, connection_from_args(args, target), tolerance=args.tolerance)
 
     name = f"{report.target}/{report.set}"

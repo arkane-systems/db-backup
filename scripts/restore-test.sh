@@ -14,7 +14,8 @@
 # Options:
 #   -s, --set SET       set to test: "latest" (default) or a timestamp like 20261009T021500Z
 #   -i, --image IMAGE   db-backup image to test with (default: $DBBACKUP_IMAGE, else
-#                       ghcr.io/arkane-systems/db-backup:latest)
+#                       ghcr.io/arkane-systems/db-backup:latest); pulled first, so
+#                       a moving tag is current
 #   -b, --build         build the image from this checkout instead
 #   -t, --tmpfs         keep the scratch servers' data in RAM: faster, but it must fit
 #   -k, --keep          leave each scratch server running afterwards, for inspection
@@ -69,6 +70,13 @@ if $build; then
     if ! build_log=$(docker build --load --quiet --target runtime -t "$image" "$here" 2>&1); then
         echo "$build_log" >&2
         die "image build failed"
+    fi
+else
+    # docker compose run uses any local copy as is, and a cached :latest can be
+    # releases behind the sets it's testing. A local-only image can't be pulled.
+    if ! docker pull --quiet "$image" >/dev/null 2>&1; then
+        docker image inspect "$image" >/dev/null 2>&1 || die "can't pull $image, and there's no local copy"
+        echo "restore-test: couldn't pull $image; using the local copy" >&2
     fi
 fi
 
