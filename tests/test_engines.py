@@ -9,7 +9,7 @@ import pytest
 from dbbackup import proc
 from dbbackup.config import parse_config
 from dbbackup.engines import engine_for
-from dbbackup.engines.base import safe_filename, version_tuple
+from dbbackup.engines.base import EngineError, safe_filename, version_tuple
 from dbbackup.engines.mariadb import option_file_value, statement_account, without_accounts
 from dbbackup.engines.mongodb import _ns_escape
 from dbbackup.engines.postgres import conninfo_dbname, without_roles
@@ -214,6 +214,30 @@ def test_select_databases(monkeypatch):
     engine = engine_for(target("postgres", include=["missing"]))
     with pytest.raises(Exception, match="not found on server: missing"):
         engine.select_databases()
+
+
+def test_postgres_restore_refuses_a_server_without_the_extensions(monkeypatch, tmp_path):
+    rec = Recorder(monkeypatch)
+    engine = engine_for(target("postgres"))
+    monkeypatch.setattr(type(engine), "list_databases", lambda self: ["postgres"])
+    monkeypatch.setattr(type(engine), "query", lambda self, sql, db=None, **v: [["plpgsql"], ["pg_trgm"]])
+    manifest = {
+        "contents": {"globals": "globals.sql.zst", "databases": {"app": "app.pgdump"}},
+        "inventory": {"databases": {"app": {"extensions": {"plpgsql": "1.0", "vector": "0.8.1"}}}},
+    }
+    with pytest.raises(EngineError, match="doesn't have extension\\(s\\) the backup uses: vector"):
+        engine.restore(tmp_path, manifest, ["app"], force=False, include_globals=True)
+    assert rec.calls == []  # nothing restored
+
+
+def test_postgres_restore_of_a_set_without_recorded_extensions(monkeypatch, tmp_path):
+    rec = Recorder(monkeypatch)
+    engine = engine_for(target("postgres"))
+    monkeypatch.setattr(type(engine), "list_databases", lambda self: ["postgres"])
+    monkeypatch.setattr(type(engine), "query", lambda self, sql, db=None, **v: [])  # not even plpgsql
+    manifest = {"contents": {"globals": "globals.sql.zst", "databases": {"app": "app.pgdump"}}, "inventory": {"databases": {"app": {}}}}
+    engine.restore(tmp_path, manifest, ["app"], force=False, include_globals=False)
+    assert [cmd[0] for cmd, _env in rec.calls] == ["pg_restore", "vacuumdb"]
 
 
 def test_ns_escape():

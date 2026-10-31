@@ -247,6 +247,7 @@ def cmd_inspect(args) -> int:
     if not bset.ok:
         raise StorageError(f"{bset.path} has no valid manifest")
     m = bset.manifest
+    extensions = sorted({ext for db in m.get("inventory", {}).get("databases", {}).values() for ext in db.get("extensions", {})})
     if args.format == "json":
         print(json.dumps({k: v for k, v in m.items() if k != "files"}, indent=2, sort_keys=True))
     elif args.format == "env":
@@ -257,6 +258,7 @@ def cmd_inspect(args) -> int:
             "DBB_SERVER_VERSION": m.get("server_version", ""),
             "DBB_DATABASES": str(len(m.get("databases", []))),
             "DBB_SIZE_BYTES": str(m.get("size_bytes", "")),
+            "DBB_EXTENSIONS": " ".join(extensions),
         }
         for key, value in values.items():
             print(f"{key}={shlex.quote(value)}")
@@ -264,6 +266,8 @@ def cmd_inspect(args) -> int:
         print(f"target:   {m['target']} ({m['type']} {m.get('server_version', '?')}, {m.get('host') or 'URI'})")
         print(f"set:      {bset.name}  finished {m.get('finished')}  ({human_size(m.get('size_bytes'))}, {m.get('duration_s')}s)")
         print(f"contents: {', '.join(m.get('databases', [])) or '(no databases)'}")
+        if extensions:
+            print(f"extensions: {', '.join(extensions)}")
         for warning in m.get("warnings", []):
             print(f"warning:  {warning}")
     return EXIT_OK

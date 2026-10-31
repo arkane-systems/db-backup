@@ -14,6 +14,7 @@ CREATE DATABASE "odd.name/db" OWNER app_owner;
 CREATE DATABASE scratch;
 
 \connect app1
+CREATE EXTENSION pg_trgm;
 SET ROLE app_owner;
 CREATE SCHEMA billing;
 CREATE TABLE public.customers (id serial PRIMARY KEY, name text NOT NULL, created timestamptz DEFAULT now());
@@ -25,6 +26,7 @@ CREATE TABLE billing.invoices (
 );
 INSERT INTO billing.invoices (customer_id, amount) SELECT (g % 5000) + 1, g * 1.5 FROM generate_series(1, 20000) g;
 CREATE INDEX invoices_customer ON billing.invoices (customer_id);
+CREATE INDEX customers_name_trgm ON public.customers USING gin (name gin_trgm_ops);
 CREATE VIEW billing.big_invoices AS SELECT * FROM billing.invoices WHERE amount > 10000;
 CREATE MATERIALIZED VIEW billing.totals AS SELECT customer_id, sum(amount) AS total FROM billing.invoices GROUP BY customer_id;
 CREATE FUNCTION billing.invoice_count(c int) RETURNS bigint LANGUAGE sql AS $$ SELECT count(*) FROM billing.invoices WHERE customer_id = c $$;

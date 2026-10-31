@@ -14,7 +14,8 @@ EXPECTED = {
                 "public.customers": {"kind": "table", "rows": 5000},
                 "public.big_customers": {"kind": "view", "rows": None},
                 "public.unanalyzed": {"kind": "table", "rows": None},
-            }
+            },
+            "extensions": {"plpgsql": "1.0", "vector": "0.8.1"},
         },
         "logs": {"objects": {"events": {"kind": "collection", "rows": 2000}}},
     },
@@ -31,7 +32,8 @@ def restored(**overrides):
                     "public.big_customers": {"kind": "view", "rows": None},
                     "public.unanalyzed": {"kind": "table", "rows": 12},
                     "public.extra": {"kind": "table", "rows": 1},
-                }
+                },
+                "extensions": {"plpgsql": "1.0", "vector": "0.8.2"},
             },
             "logs": {"objects": {"events": {"kind": "collection", "rows": 2000}}},
         },
@@ -56,6 +58,12 @@ def test_missing_database_object_and_user_are_errors():
         "database logs is missing",
         "user/role app_owner is missing",
     ]
+
+
+def test_missing_extension_is_an_error():
+    actual = restored()
+    del actual["databases"]["app"]["extensions"]["vector"]
+    assert compare_inventory(EXPECTED, actual, {"app", "logs"}).errors == ["app: extension vector is missing"]
 
 
 def test_kind_change_is_an_error():
@@ -107,12 +115,24 @@ def test_users_not_listable_on_either_side():
     assert result.errors == [] and result.warnings
 
 
-def make_set(tmp_path, target="pg-main", ttype="postgres"):
+def make_set(tmp_path, target="pg-main", ttype="postgres", *, extensions=True):
     store = Store(tmp_path)
     when = datetime(2026, 10, 9, 2, 15, tzinfo=UTC)
     partial = store.begin(target, when)
     (partial / "globals.sql.zst").write_bytes(b"x")
-    manifest = {"status": "ok", "target": target, "type": ttype, "server_version": "18.6", "databases": ["app", "it's"], "size_bytes": 1}
+    manifest = {
+        "status": "ok",
+        "target": target,
+        "type": ttype,
+        "server_version": "18.6",
+        "databases": ["app", "it's"],
+        "size_bytes": 1,
+        "inventory": {
+            "databases": {"app": {"extensions": {"plpgsql": "1.0", "vector": "0.8.1"}}, "it's": {"extensions": {"plpgsql": "1.0"}}}
+        },
+    }
+    if not extensions:  # as made by 0.2.x and earlier
+        del manifest["inventory"]
     return store.finalize(partial, manifest)
 
 
@@ -136,14 +156,29 @@ def test_inspect_env_output_is_shell_safe(tmp_path, capsys):
     bset = make_set(tmp_path)
     assert main(["inspect", str(tmp_path / "pg-main"), "--format", "env"]) == 0
     values = dict(line.split("=", 1) for line in capsys.readouterr().out.splitlines())
-    assert {k: shlex.split(v)[0] for k, v in values.items()} == {
+    assert {k: " ".join(shlex.split(v)) for k, v in values.items()} == {
         "DBB_TARGET": "pg-main",
         "DBB_TYPE": "postgres",
         "DBB_SET": bset.name,
         "DBB_SERVER_VERSION": "18.6",
         "DBB_DATABASES": "2",
         "DBB_SIZE_BYTES": "1",
+        "DBB_EXTENSIONS": "plpgsql vector",
     }
+
+
+def test_inspect_sets_without_recorded_extensions(tmp_path, capsys):
+    make_set(tmp_path, extensions=False)
+    assert main(["inspect", str(tmp_path / "pg-main"), "--format", "env"]) == 0
+    assert "DBB_EXTENSIONS=''" in capsys.readouterr().out.splitlines()
+    assert main(["inspect", str(tmp_path / "pg-main")]) == 0
+    assert "extensions:" not in capsys.readouterr().out
+
+
+def test_extensions_not_compared_when_the_backup_recorded_none():
+    expected = {"databases": {"app": {"objects": {}}}, "users": None}
+    actual = {"databases": {"app": {"objects": {}, "extensions": {"plpgsql": "1.0"}}}, "users": None}
+    assert compare_inventory(expected, actual, {"app"}).errors == []
 
 
 def test_restore_test_needs_a_scratch_server(tmp_path):
