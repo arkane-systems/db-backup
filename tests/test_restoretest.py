@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from dbbackup.cli import main
-from dbbackup.restoretest import compare_inventory, counts_match, target_for_set
+from dbbackup.restoretest import CheckResult, RestoreTestReport, compare_inventory, counts_match, target_for_set
 from dbbackup.storage import StorageError, Store, open_set
 
 EXPECTED = {
@@ -115,7 +115,7 @@ def test_users_not_listable_on_either_side():
     assert result.errors == [] and result.warnings
 
 
-def make_set(tmp_path, target="pg-main", ttype="postgres", *, extensions=True):
+def make_set(tmp_path, target="pg-main", ttype="postgres", *, extensions=True, **extra):
     store = Store(tmp_path)
     when = datetime(2026, 10, 9, 2, 15, tzinfo=UTC)
     partial = store.begin(target, when)
@@ -133,6 +133,7 @@ def make_set(tmp_path, target="pg-main", ttype="postgres", *, extensions=True):
     }
     if not extensions:  # as made by 0.2.x and earlier
         del manifest["inventory"]
+    manifest.update(extra)
     return store.finalize(partial, manifest)
 
 
@@ -179,6 +180,15 @@ def test_extensions_not_compared_when_the_backup_recorded_none():
     expected = {"databases": {"app": {"objects": {}}}, "users": None}
     actual = {"databases": {"app": {"objects": {}, "extensions": {"plpgsql": "1.0"}}}, "users": None}
     assert compare_inventory(expected, actual, {"app"}).errors == []
+
+
+@pytest.mark.parametrize(("made_by", "warned"), [("99.0.0", True), ("0.1.0", False), (None, False)])
+def test_restore_test_warns_about_sets_from_a_newer_version(tmp_path, monkeypatch, caplog, made_by, warned):
+    bset = make_set(tmp_path, **({"tool_version": made_by} if made_by else {}))
+    report = RestoreTestReport("pg-main", bset.name, 0.1, CheckResult(), [])
+    monkeypatch.setattr("dbbackup.cli.run_restore_test", lambda *a, **k: report)
+    assert main(["restore-test", str(tmp_path / "pg-main"), "--host", "scratch"]) == 0
+    assert ("newer than this one" in caplog.text) is warned
 
 
 def test_restore_test_needs_a_scratch_server(tmp_path):
