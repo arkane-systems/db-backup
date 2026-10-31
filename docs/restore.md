@@ -49,6 +49,7 @@ dbbackup restore <target> [--set latest|<timestamp>] [-d <database> ...] \
 - **Existing databases.** The tool refuses to overwrite a database that already exists unless you pass `--force`.
 - **Existing accounts are left alone.** Users and roles that already exist on the destination keep their passwords and privileges. That includes the account you restore as, and a fresh server's own `root` and `healthcheck` accounts. Missing users and roles are created with their backed-up passwords and grants.
 - **The set is checked first.** The tool re-checks every file's checksum before it restores anything.
+- **PostgreSQL extensions must be installed.** A destination without an extension the backup uses (pgvector's `vector`, say) is refused before anything is restored. The manifest's `inventory` lists each database's `extensions`, and `dbbackup inspect` shows them.
 
 ### From Kubernetes
 
@@ -96,6 +97,8 @@ Use client tools at least as new as the server that was backed up. The manifest'
 ### PostgreSQL
 
 A set contains `globals.sql.zst` (roles and tablespaces) and one `<db>.pgdump/` directory per database. Each directory is a `pg_dump --format=directory` archive.
+
+The new server needs every extension the databases use installed, such as pgvector (the `pgvector/pgvector` images have it). The manifest's `inventory` lists them per database. A missing one makes `pg_restore` fail on `CREATE EXTENSION`, and then on everything that depends on it.
 
 1. **Roles first.** Restored objects are owned by these roles and granted to them.
 
@@ -182,7 +185,7 @@ scripts/restore-test.sh --set 20261009T021500Z /mnt/db-backups mariadb-main
 
 For each target, the script:
 
-1. Reads the set's manifest, using the db-backup image, and starts a throwaway scratch server matching the backed-up server's version: `postgres:<major>`, `mariadb:<major.minor>` or `mongo:<major.minor>`. MongoDB runs as a single-node replica set, so the oplog is replayed as it would be in production. Each scratch server has its own compose project and network, and nothing is published on the host.
+1. Reads the set's manifest, using the db-backup image, and starts a throwaway scratch server matching the backed-up server's version: `postgres:<major>`, `mariadb:<major.minor>` or `mongo:<major.minor>`. PostgreSQL sets that use pgvector get `pgvector/pgvector:pg<major>` instead, since the stock image only has the contrib extensions. MongoDB runs as a single-node replica set, so the oplog is replayed as it would be in production. Each scratch server has its own compose project and network, and nothing is published on the host.
 2. Runs `dbbackup restore-test`, which:
    - re-checks every file's checksum, and the dumps' integrity
    - restores the set exactly as `dbbackup restore` would, users and roles included
@@ -194,6 +197,7 @@ The comparison treats these as **errors**:
 - a database missing from the restored server
 - a missing table, view, materialized view or collection
 - a missing user or role
+- a missing PostgreSQL extension
 - an object restored as a different kind (say, a view that came back as a table)
 
 Row-count differences are only **warnings**. The restored server is always counted exactly; what it's compared with depends on the target's `exact_counts` setting:
@@ -211,7 +215,7 @@ The run ends with a summary table, including how long each restore took, which i
 | `-t`, `--tmpfs` | Keep the scratch servers' data in RAM. Faster, but the restored data must fit in memory. |
 | `-k`, `--keep` | Leave each scratch server running afterwards, to look around in. The script prints how to remove it. |
 
-To use a scratch image other than the one matching the recorded version, set `SCRATCH_IMAGE_POSTGRES`, `SCRATCH_IMAGE_MARIADB` or `SCRATCH_IMAGE_MONGODB`. For example, `SCRATCH_IMAGE_POSTGRES=postgres:19` rehearses an upgrade.
+To use a scratch image other than the one matching the recorded version, set `SCRATCH_IMAGE_POSTGRES`, `SCRATCH_IMAGE_MARIADB` or `SCRATCH_IMAGE_MONGODB`. For example, `SCRATCH_IMAGE_POSTGRES=postgres:19` rehearses an upgrade. A set that uses another extension the stock image lacks, such as PostGIS, needs an image that has it (`SCRATCH_IMAGE_POSTGRES=postgis/postgis:18-3.6`): without one, the restore stops before it starts, naming the missing extensions.
 
 The backups are mounted read-only, and are read as the backup root's owner (`pg_dump`'s directory archives are private to their owner).
 

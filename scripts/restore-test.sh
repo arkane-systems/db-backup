@@ -21,7 +21,8 @@
 #   -h, --help          show this help
 #
 # Scratch images follow the recorded server version (postgres:<major>,
-# mariadb:<major.minor>, mongo:<major.minor>); override them with
+# mariadb:<major.minor>, mongo:<major.minor>), and PostgreSQL sets that use
+# pgvector get pgvector/pgvector:pg<major>; override them with
 # SCRATCH_IMAGE_POSTGRES, SCRATCH_IMAGE_MARIADB or SCRATCH_IMAGE_MONGODB.
 #
 # Exits non-zero if any target fails.
@@ -105,7 +106,7 @@ for target in "${targets[@]}"; do
         cleanup
         continue
     fi
-    DBB_TYPE="" DBB_SET="" DBB_SERVER_VERSION=""
+    DBB_TYPE="" DBB_SET="" DBB_SERVER_VERSION="" DBB_EXTENSIONS=""
     while IFS= read -r line; do
         [[ $line =~ ^DBB_[A-Z_]+= ]] && eval "$line"  # values are shell-quoted by dbbackup
     done <<<"$info"
@@ -115,7 +116,10 @@ for target in "${targets[@]}"; do
     minor=${version#*.}; minor=${minor%%.*}
     case $DBB_TYPE in
         postgres)
-            scratch_image=${SCRATCH_IMAGE_POSTGRES:-postgres:$major}
+            # The stock image has only the contrib extensions; pgvector's image adds vector.
+            default_image=postgres:$major
+            [[ " $DBB_EXTENSIONS " == *" vector "* ]] && default_image=pgvector/pgvector:pg$major
+            scratch_image=${SCRATCH_IMAGE_POSTGRES:-$default_image}
             conn=(--host scratch-postgres --username postgres --password-env SCRATCH_PASSWORD) ;;
         mariadb)
             scratch_image=${SCRATCH_IMAGE_MARIADB:-mariadb:$major.$minor}
@@ -172,9 +176,9 @@ for target in "${targets[@]}"; do
 done
 
 echo
-printf '%-24s %-17s %-16s %-36s %s\n' TARGET SET SCRATCH RESULT RESTORE
+printf '%-24s %-17s %-24s %-36s %s\n' TARGET SET SCRATCH RESULT RESTORE
 for row in "${results[@]}"; do
     IFS='|' read -r t s i r d <<<"$row"
-    printf '%-24s %-17s %-16s %-36s %s\n' "$t" "$s" "$i" "$r" "$d"
+    printf '%-24s %-17s %-24s %-36s %s\n' "$t" "$s" "$i" "$r" "$d"
 done
 exit $failed

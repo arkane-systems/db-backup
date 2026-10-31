@@ -1,7 +1,7 @@
 """Restore testing: restore a set into a scratch server, then check the result
 against the inventory its manifest recorded at backup time.
 
-Anything missing (a database, table, view, collection, user or role) is an error.
+Anything missing (a database, table, view, collection, extension, user or role) is an error.
 Row-count differences are only warnings. The restored side is always counted
 exactly (it's a scratch server); what it's compared with depends on the backup:
 
@@ -62,7 +62,10 @@ def compare_inventory(
         if db not in present:
             result.errors.append(f"database {db} is missing")
             continue
-        restored = actual.get("databases", {}).get(db, {}).get("objects", {})
+        restored_db = actual.get("databases", {}).get(db, {})
+        for ext in sorted(set(info.get("extensions", {})) - set(restored_db.get("extensions", {}))):
+            result.errors.append(f"{db}: extension {ext} is missing")
+        restored = restored_db.get("objects", {})
         for name, obj in sorted(info.get("objects", {}).items()):
             result.objects_checked += 1
             got = restored.get(name)

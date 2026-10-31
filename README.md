@@ -12,7 +12,7 @@ A containerized database backup solution: logical backups of any number of **Mar
 - **Isolates failures.** One server's failure never stops the others. A target is pruned only after one of its own backups succeeds, and the newest good set is always kept.
 - **Reports to MQTT,** with Home Assistant discovery. Failures, and backups that have *stopped happening*, can raise [Alert Redux](https://github.com/arkane-systems/ha-alert-redux) alerts; see [docs/home-assistant.md](docs/home-assistant.md).
 - **Restores with one command,** `dbbackup restore`. Every set can also be restored with stock client tools; see [docs/restore.md](docs/restore.md).
-- **Tests restores locally.** `scripts/restore-test.sh` restores sets into throwaway Docker servers of the matching version, and checks every database, table, collection, user and role against what the backup recorded.
+- **Tests restores locally.** `scripts/restore-test.sh` restores sets into throwaway Docker servers of the matching version, and checks every database, table, collection, extension, user and role against what the backup recorded. PostgreSQL sets that use pgvector are tested in pgvector's image.
 
 Supported servers: MariaDB 11.4+, PostgreSQL 18+, MongoDB 8.3+ (as a replica set, for `--oplog`). Older versions may well work: the tool logs a warning and carries on. The image ships the PostgreSQL 18 client, the MariaDB 11.8 client and MongoDB Database Tools 100.19. It is built for linux/amd64 only, because MongoDB publishes its Debian tools packages only for x86-64.
 

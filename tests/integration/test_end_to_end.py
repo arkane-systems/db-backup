@@ -150,6 +150,7 @@ def test_postgres_manifest():
     objects = m["inventory"]["databases"]["app1"]["objects"]
     assert objects["billing.invoices"] == {"kind": "table", "rows": 20000}
     assert objects["billing.big_invoices"]["kind"] == "view"
+    assert set(m["inventory"]["databases"]["app1"]["extensions"]) == {"pg_trgm", "plpgsql"}
     assert {"app_owner", "app_reader", "reporting"} <= set(m["inventory"]["users"])
     assert m["warnings"] == []
 
@@ -220,6 +221,7 @@ def test_restore_postgres():
         RESTORE_PG, "SET ROLE reporting; SELECT count(*) FROM billing.totals", db="app1", user="app_reader", password="reader-pw"
     ) == ["5000"]
     assert pg(RESTORE_PG, "SHOW work_mem", db="app1") == ["8MB"]
+    assert pg(RESTORE_PG, "SELECT extname FROM pg_extension WHERE extname = 'pg_trgm'", db="app1") == ["pg_trgm"]
     # ...and the restoring account's own password was left alone (pg() connects with it).
     assert pg(RESTORE_PG, "SELECT 1") == ["1"]
 

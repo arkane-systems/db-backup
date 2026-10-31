@@ -131,7 +131,9 @@ class PostgresEngine(Engine):
                 sql = " UNION ALL ".join(f"SELECT {i}, count(*) FROM {qualified}" for i, (_, qualified) in enumerate(countable))
                 for i, count in self.query(sql, db=db):
                     objects[countable[int(i)][0]]["rows"] = int(count)
-            result[db] = {"objects": objects}
+            # A restore needs these installed on the destination (pgvector, PostGIS, ...).
+            extensions = dict(self.query("SELECT extname, extversion FROM pg_extension ORDER BY extname", db=db))
+            result[db] = {"objects": objects, "extensions": extensions}
         users = [r[0] for r in self.query("SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname")]
         return {"counts": "exact" if exact else "estimated", "databases": result, "users": users}
 
@@ -193,6 +195,15 @@ class PostgresEngine(Engine):
         clashes = [db for db in databases if db in existing and (db != maintenance_db or self._has_user_objects(db))]
         if clashes and not force:
             raise EngineError(f"database(s) already exist on {self.conn.host}: {', '.join(clashes)} (use --force to replace them)")
+
+        # Fail before changing anything, rather than part-way through pg_restore.
+        recorded = manifest.get("inventory", {}).get("databases", {})
+        needed = {ext for db in databases for ext in recorded.get(db, {}).get("extensions", {})}
+        unavailable = needed - {r[0] for r in self.query("SELECT name FROM pg_available_extensions")}
+        if unavailable:
+            raise EngineError(
+                f"{self.conn.host} doesn't have extension(s) the backup uses: {', '.join(sorted(unavailable))} (install them first)"
+            )
 
         if include_globals:
             # Roles first: restored objects are owned by, and granted to, them.
