@@ -23,10 +23,11 @@ jobs:
       - run: make test PYTHON=python
 
   integration:
-    # MongoDB 8.x refuses to start on Linux 6.19 to 7.0.13 (SERVER-121912), which
-    # includes the ubuntu-26.04 (ubuntu-latest) runner's kernel. Go back to
-    # ubuntu-latest once that runner has 7.0.14+ or 7.1+.
-    runs-on: ubuntu-24.04
+    # MongoDB 8.x refuses to start on Linux 6.19 to 7.0.13 (SERVER-121912). The
+    # ubuntu-24.04 and ubuntu-26.04 runners both have 7.0.0; ubuntu-22.04 has 6.8.
+    # Go back to ubuntu-latest once it has 7.0.14+ or 7.1+, and before 22.04's
+    # runners are retired (April 2027).
+    runs-on: ubuntu-22.04
     needs: test
     steps:
       - uses: actions/checkout@v4
