@@ -69,7 +69,7 @@ spec:
       securityContext: {runAsNonRoot: true, runAsUser: 1004, runAsGroup: 1004}
       containers:
         - name: restore
-          image: ghcr.io/arkane-systems/db-backup:0.3.0
+          image: ghcr.io/arkane-systems/db-backup:0.3.1
           args: [restore, postgres-main, --host, new-postgres.example.lan, --username, postgres, --password-env, ADMIN_PASSWORD]
           env:
             - name: ADMIN_PASSWORD
@@ -86,7 +86,7 @@ spec:
 
 ```bash
 docker run --rm -v /mnt/db-backups:/backups:ro -v $PWD/config.yaml:/etc/dbbackup/config.yaml:ro \
-    -e ADMIN_PASSWORD ghcr.io/arkane-systems/db-backup:0.3.0 \
+    -e ADMIN_PASSWORD ghcr.io/arkane-systems/db-backup:0.3.1 \
     restore mariadb-main --host new-mariadb.example.lan --username root --password-env ADMIN_PASSWORD
 ```
 
