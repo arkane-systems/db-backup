@@ -230,5 +230,15 @@ def test_postgres_restore_refuses_a_server_without_the_extensions(monkeypatch, t
     assert rec.calls == []  # nothing restored
 
 
+def test_postgres_restore_of_a_set_without_recorded_extensions(monkeypatch, tmp_path):
+    rec = Recorder(monkeypatch)
+    engine = engine_for(target("postgres"))
+    monkeypatch.setattr(type(engine), "list_databases", lambda self: ["postgres"])
+    monkeypatch.setattr(type(engine), "query", lambda self, sql, db=None, **v: [])  # not even plpgsql
+    manifest = {"contents": {"globals": "globals.sql.zst", "databases": {"app": "app.pgdump"}}, "inventory": {"databases": {"app": {}}}}
+    engine.restore(tmp_path, manifest, ["app"], force=False, include_globals=False)
+    assert [cmd[0] for cmd, _env in rec.calls] == ["pg_restore", "vacuumdb"]
+
+
 def test_ns_escape():
     assert _ns_escape("a*b$c") == "a\\*b\\$c"

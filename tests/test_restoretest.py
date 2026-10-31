@@ -115,7 +115,7 @@ def test_users_not_listable_on_either_side():
     assert result.errors == [] and result.warnings
 
 
-def make_set(tmp_path, target="pg-main", ttype="postgres"):
+def make_set(tmp_path, target="pg-main", ttype="postgres", *, extensions=True):
     store = Store(tmp_path)
     when = datetime(2026, 10, 9, 2, 15, tzinfo=UTC)
     partial = store.begin(target, when)
@@ -131,6 +131,8 @@ def make_set(tmp_path, target="pg-main", ttype="postgres"):
             "databases": {"app": {"extensions": {"plpgsql": "1.0", "vector": "0.8.1"}}, "it's": {"extensions": {"plpgsql": "1.0"}}}
         },
     }
+    if not extensions:  # as made by 0.2.x and earlier
+        del manifest["inventory"]
     return store.finalize(partial, manifest)
 
 
@@ -163,6 +165,20 @@ def test_inspect_env_output_is_shell_safe(tmp_path, capsys):
         "DBB_SIZE_BYTES": "1",
         "DBB_EXTENSIONS": "plpgsql vector",
     }
+
+
+def test_inspect_sets_without_recorded_extensions(tmp_path, capsys):
+    make_set(tmp_path, extensions=False)
+    assert main(["inspect", str(tmp_path / "pg-main"), "--format", "env"]) == 0
+    assert "DBB_EXTENSIONS=''" in capsys.readouterr().out.splitlines()
+    assert main(["inspect", str(tmp_path / "pg-main")]) == 0
+    assert "extensions:" not in capsys.readouterr().out
+
+
+def test_extensions_not_compared_when_the_backup_recorded_none():
+    expected = {"databases": {"app": {"objects": {}}}, "users": None}
+    actual = {"databases": {"app": {"objects": {}, "extensions": {"plpgsql": "1.0"}}}, "users": None}
+    assert compare_inventory(expected, actual, {"app"}).errors == []
 
 
 def test_restore_test_needs_a_scratch_server(tmp_path):

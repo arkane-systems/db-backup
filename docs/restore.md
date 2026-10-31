@@ -49,7 +49,7 @@ dbbackup restore <target> [--set latest|<timestamp>] [-d <database> ...] \
 - **Existing databases.** The tool refuses to overwrite a database that already exists unless you pass `--force`.
 - **Existing accounts are left alone.** Users and roles that already exist on the destination keep their passwords and privileges. That includes the account you restore as, and a fresh server's own `root` and `healthcheck` accounts. Missing users and roles are created with their backed-up passwords and grants.
 - **The set is checked first.** The tool re-checks every file's checksum before it restores anything.
-- **PostgreSQL extensions must be installed.** A destination without an extension the backup uses (pgvector's `vector`, say) is refused before anything is restored. The manifest's `inventory` lists each database's `extensions`, and `dbbackup inspect` shows them.
+- **PostgreSQL extensions must be installed.** A destination without an extension the backup uses (pgvector's `vector`, say) is refused before anything is restored. The manifest's `inventory` lists each database's `extensions`, and `dbbackup inspect` shows them. Sets made by 0.2.x and earlier didn't record extensions, so they restore without this check, as they always did.
 
 ### From Kubernetes
 
@@ -69,7 +69,7 @@ spec:
       securityContext: {runAsNonRoot: true, runAsUser: 1004, runAsGroup: 1004}
       containers:
         - name: restore
-          image: ghcr.io/arkane-systems/db-backup:0.2.0
+          image: ghcr.io/arkane-systems/db-backup:0.3.0
           args: [restore, postgres-main, --host, new-postgres.example.lan, --username, postgres, --password-env, ADMIN_PASSWORD]
           env:
             - name: ADMIN_PASSWORD
@@ -86,7 +86,7 @@ spec:
 
 ```bash
 docker run --rm -v /mnt/db-backups:/backups:ro -v $PWD/config.yaml:/etc/dbbackup/config.yaml:ro \
-    -e ADMIN_PASSWORD ghcr.io/arkane-systems/db-backup:0.2.0 \
+    -e ADMIN_PASSWORD ghcr.io/arkane-systems/db-backup:0.3.0 \
     restore mariadb-main --host new-mariadb.example.lan --username root --password-env ADMIN_PASSWORD
 ```
 
