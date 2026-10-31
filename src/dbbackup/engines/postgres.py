@@ -27,7 +27,14 @@ def conninfo_dbname(db: str) -> str:
     return "dbname='" + db.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-_ROLE_STATEMENT = re.compile(r'^(?:CREATE|ALTER|COMMENT ON) ROLE ("(?:[^"]|"")*"|[^\s;]+)')
+_ROLE_NAME = r'("(?:[^"]|"")*"|[^\s;]+)'
+_ROLE_STATEMENT = re.compile(rf"^(?:CREATE|ALTER|COMMENT ON) ROLE {_ROLE_NAME}")
+_ROLE_ATTRIBUTES = re.compile(rf"^ALTER ROLE {_ROLE_NAME} WITH (.*);$")
+_GRANTED_BY = re.compile(rf"^(GRANT .+?) GRANTED BY {_ROLE_NAME};$")
+
+
+def _role_name(token: str) -> str:
+    return token[1:-1].replace('""', '"') if token.startswith('"') else token
 
 
 def without_roles(sql: str, existing: set[str]) -> tuple[str, set[str]]:
@@ -40,13 +47,39 @@ def without_roles(sql: str, existing: set[str]) -> tuple[str, set[str]]:
     skipped = set()
     for line in sql.splitlines():
         if m := _ROLE_STATEMENT.match(line):
-            name = m.group(1)
-            role = name[1:-1].replace('""', '"') if name.startswith('"') else name
+            role = _role_name(m.group(1))
             if role in existing:
                 skipped.add(role)
                 continue
         kept.append(line)
     return "\n".join(kept) + "\n", skipped
+
+
+def without_superuser_grantors(sql: str) -> tuple[str, set[str]]:
+    """Drop ``GRANTED BY`` from the memberships in a globals dump that a superuser granted.
+
+    Since PostgreSQL 16, a superuser's grants are recorded as made by the bootstrap
+    superuser (the one initdb created), so a dump names that role as grantor. On a
+    server whose bootstrap superuser has another name, the same role is an ordinary
+    superuser, which can't be named as grantor of a role it has no ADMIN option on.
+    Without the clause, the grant is recorded as made by this server's bootstrap
+    superuser instead, just as it was on the original.
+
+    Returns the rewritten SQL, and the grantors that were dropped.
+    """
+    superusers = set()
+    for line in sql.splitlines():
+        if m := _ROLE_ATTRIBUTES.match(line):
+            if "SUPERUSER" in m.group(2).split(" PASSWORD ")[0].split():
+                superusers.add(_role_name(m.group(1)))
+    lines = []
+    dropped = set()
+    for line in sql.splitlines():
+        if (m := _GRANTED_BY.match(line)) and _role_name(m.group(2)) in superusers:
+            dropped.add(_role_name(m.group(2)))
+            line = m.group(1) + ";"
+        lines.append(line)
+    return "\n".join(lines) + "\n", dropped
 
 
 class PostgresEngine(Engine):
@@ -245,7 +278,10 @@ class PostgresEngine(Engine):
         # restoring as) are left exactly as they are: replaying their ALTER ROLE
         # ... PASSWORD would reset their passwords to the backed-up server's.
         existing = {r[0] for r in self.query("SELECT rolname FROM pg_roles")}
-        sql, skipped = without_roles(proc.run(["zstd", "-q", "-dc", str(path)]).stdout, existing)
+        sql, grantors = without_superuser_grantors(proc.run(["zstd", "-q", "-dc", str(path)]).stdout)
+        if grantors:
+            log.info("%s: grants by superuser %s attributed to this server's own superuser", self.target.name, ", ".join(sorted(grantors)))
+        sql, skipped = without_roles(sql, existing)
         if skipped:
             log.info("%s: left existing role(s) as they are: %s", self.target.name, ", ".join(sorted(skipped)))
         cmd = ["psql", "-X", "-q", "-v", "ON_ERROR_STOP=0", *self._conn_args(), "-d", conninfo_dbname(self.target.maintenance_db)]

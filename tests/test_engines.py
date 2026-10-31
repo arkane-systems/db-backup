@@ -12,7 +12,7 @@ from dbbackup.engines import engine_for
 from dbbackup.engines.base import EngineError, safe_filename, version_tuple
 from dbbackup.engines.mariadb import option_file_value, statement_account, without_accounts
 from dbbackup.engines.mongodb import _ns_escape
-from dbbackup.engines.postgres import conninfo_dbname, without_roles
+from dbbackup.engines.postgres import conninfo_dbname, without_roles, without_superuser_grantors
 
 SECRET = "pa ss'w\"o#rd\\"
 
@@ -177,6 +177,29 @@ def test_postgres_without_roles():
     kept, skipped = without_roles(sql, {"postgres", 'Odd "Role"'})
     assert skipped == {"postgres", 'Odd "Role"'}
     assert kept == "CREATE ROLE app;\nALTER ROLE app WITH LOGIN PASSWORD 'x';\nGRANT reporting TO postgres;\n"
+
+
+def test_postgres_without_superuser_grantors():
+    sql = "\n".join(
+        [
+            "CREATE ROLE memlord;",
+            "ALTER ROLE memlord WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN PASSWORD 'SCRAM-SUPERUSER';",
+            'ALTER ROLE "Admin ""X""" WITH SUPERUSER LOGIN;',
+            "ALTER ROLE manager WITH NOSUPERUSER CREATEROLE LOGIN PASSWORD 'SUPERUSER';",
+            "GRANT pg_read_all_data TO dbbackup WITH INHERIT TRUE GRANTED BY memlord;",
+            'GRANT reporting TO app GRANTED BY "Admin ""X""";',
+            "GRANT reporting TO reader WITH INHERIT TRUE GRANTED BY manager;",
+            "GRANT reporting TO other;",
+        ]
+    )
+    kept, dropped = without_superuser_grantors(sql)
+    assert dropped == {"memlord", 'Admin "X"'}
+    assert kept.splitlines()[4:] == [
+        "GRANT pg_read_all_data TO dbbackup WITH INHERIT TRUE;",
+        "GRANT reporting TO app;",
+        "GRANT reporting TO reader WITH INHERIT TRUE GRANTED BY manager;",  # not a superuser: kept
+        "GRANT reporting TO other;",
+    ]
 
 
 @pytest.mark.parametrize(
